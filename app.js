@@ -83,24 +83,30 @@ window.addEventListener('DOMContentLoaded', async () => {
 async function fetchStructure() {
     try {
         const result = await apiGet('getStructure');
-        if (result.success) {
+        if (result.success && Array.isArray(result.data)) {
             agentStructure = {};
             result.data.forEach(row => {
+                const id = String(row.id || '').trim();
+                const name = String(row.name || '').trim();
                 const groupName = String(row.group || '').trim().toUpperCase();
-                if (groupName === 'OTC' || groupName === '') {
-                    agentStructure[String(row.id).trim()] = row.name;
+
+                if (id) {
+                    if (groupName.includes('OTC') || groupName === '' || !row.group) {
+                        agentStructure[id] = name;
+                    }
                 }
             });
-            if (document.getElementById('adminModal').style.display !== 'none') {
+
+            console.log("Structure Loaded Successfully:", agentStructure);
+
+            if (document.getElementById('adminModal') && document.getElementById('adminModal').style.display !== 'none') {
                 renderAdminTable(result.data);
             }
         }
     } catch (e) {
         console.error('Failed to load structure from Google Sheet', e);
     }
-}
-
-// ============================================================
+}// ============================================================
 // ORIGINAL LOGIC WITH PARSING FIXES
 // ============================================================
 function fixTime(val) {
@@ -135,16 +141,14 @@ function processAll() {
 
     const loggedInAgents = new Set();
 
-    // 1. معالجة بيانات CMS Raw Data
+    // 1. معالجة CMS Raw Data
     if (cmsRaw) {
-        // تنظيف أسطر الـ CMS المكسورة وتجميع الأسطر المرتبطة برقم الـ ID
         const rawLines = cmsRaw.split('\n');
         const cleanRows = [];
         let tempBuffer = "";
 
         rawLines.forEach(line => {
             if (!line.trim()) return;
-            // إذا كان السطر يحتوي على Tab أو يعبر عن بداية تسجيل سجل جديد
             if (line.includes('\t') || line.split(/\s+/).length > 3) {
                 if (tempBuffer) cleanRows.push(tempBuffer);
                 tempBuffer = line;
@@ -155,32 +159,25 @@ function processAll() {
         if (tempBuffer) cleanRows.push(tempBuffer);
 
         cleanRows.forEach(line => {
-            // التعامل مع الـ Tabs والمسافات المتعددة كفواصل
             let cols = line.split('\t');
             if (cols.length < 5) {
-                cols = line.trim().split(/\s{2,}/); // الاعتماد على المسافات المزدوجة كبديل للـ Tab
+                cols = line.trim().split(/\s{2,}/);
             }
 
-            if (cols.length >= 3 && !line.includes("Agent Name") && !line.includes("Login ID")) {
-                // البحث عن Login ID المكون من 5 إلى 7 أرقام داخل الأعمدة
+            if (cols.length >= 2 && !line.includes("Agent Name") && !line.includes("Login ID")) {
                 let id = "";
-                let idColIndex = -1;
-
                 for (let i = 0; i < cols.length; i++) {
-                    const match = cols[i].trim().match(/\b\d{5,7}\b/);
+                    const match = cols[i].trim().match(/\b\d{4,7}\b/);
                     if (match) {
                         id = match[0];
-                        idColIndex = i;
                         break;
                     }
                 }
 
                 if (!id) return;
 
-                // مطابقة الاسم من الـ Structure أو استخراجه من السطر إذا لم يوجد
-                const agentName = agentStructure[id] || cols[1] || cols[0] || `Agent (${id})`;
+                const agentName = agentStructure[id] || `Unknown (${id})`;
 
-                // الاستخراج المرن للحالة والبيانات
                 let state = "OTHER";
                 for (let col of cols) {
                     const uppercaseCol = col.trim().toUpperCase();
@@ -213,6 +210,62 @@ function processAll() {
             }
         });
     }
+
+    document.getElementById('kpi-staffed').innerText = countStaffed;
+    document.getElementById('kpi-avail').innerText = countAvail;
+    document.getElementById('kpi-acd').innerText = countAcd;
+    document.getElementById('kpi-aux').innerText = countAux;
+
+    // 2. معالجة Shift Schedule لحساب الـ Logged Off
+    if (shiftRaw) {
+        const shiftRows = shiftRaw.split('\n');
+        shiftRows.forEach(line => {
+            let parts = line.split('\t');
+            if (parts.length < 2) {
+                parts = line.trim().split(/\s{2,}/);
+            }
+
+            if (parts.length >= 2) {
+                let loginId = "";
+                for (let part of parts) {
+                    const match = part.trim().match(/\b\d{4,7}\b/);
+                    if (match) {
+                        loginId = match[0];
+                        break;
+                    }
+                }
+
+                if (!loginId) return;
+
+                const agentName = agentStructure[loginId] || `Agent (${loginId})`;
+                const shiftStatus = parts[parts.length - 1]?.trim().toUpperCase() || "";
+                const offStates = ["DO", "UNPAID", "PLANNED SICK", "ANNUAL", "MATERNITY", "SICK DAYOFF", "STUDY LEAVE", ""];
+                const hasShift = !offStates.includes(shiftStatus);
+
+                if (hasShift && !loggedInAgents.has(loginId)) {
+                    loggedOffCount++;
+
+                    if (activeFilters.includes("LOGGED OFF")) {
+                        const tr = document.createElement('tr');
+                        tr.className = "row-off";
+                        tr.innerHTML = `
+                            <td style="font-weight:700; color:#dc2626;">${agentName}</td>
+                            <td style="color:var(--text-dim); font-family: monospace; font-size:14px;">${loginId}</td>
+                            <td><span class="badge" style="background:var(--logoff); color:white;">LOGGED OFF</span></td>
+                            <td style="font-size:11px; color:#dc2626; font-weight: bold;">Missing from CMS</td>
+                            <td>-</td>
+                            <td style="font-size:11px; font-weight:bold; color:var(--text-dim)">Shift: ${parts[parts.length - 1]}</td>
+                            <td class="time-cell" style="color:var(--logoff)">-</td>
+                        `;
+                        tbody.appendChild(tr);
+                    }
+                }
+            }
+        });
+    }
+
+    document.getElementById('kpi-loggedoff').innerText = loggedOffCount;
+}
 
     document.getElementById('kpi-staffed').innerText = countStaffed;
     document.getElementById('kpi-avail').innerText = countAvail;
