@@ -1,10 +1,9 @@
 // ============================================================
-// CONFIG — Google Apps Script Web App URL (نفس الرابط المستخدم في الشيت)
+// CONFIG — Google Apps Script Web App URL
 // ============================================================
 const API_URL = "https://script.google.com/macros/s/AKfycbytna6gz9sE31tX_i00k1v9MAp9QyvKZwGYTao_r9B8qIVW1DcXUdyOl_Zb_kmcsFO2/exec";
 
 // agentStructure يتم تعبئته ديناميكيًا من شيت جوجل (عمود B = Login ID, عمود F = Group="OTC")
-// بدلاً من كونه ثابت داخل الكود
 let agentStructure = {};
 let currentUser = null; // { username, fullName, role }
 let activeFilters = ["AVAIL", "ACD", "AUX", "RING", "LOGGED OFF"];
@@ -72,7 +71,7 @@ async function enterApp() {
     await fetchStructure();
 }
 
-// استعادة الجلسة لو الصفحة اتعمل لها Refresh
+// استعادة الجلسة عند عمل Refresh للمتصفح
 window.addEventListener('DOMContentLoaded', async () => {
     const saved = sessionStorage.getItem('cms_otc_user');
     if (saved) {
@@ -238,7 +237,7 @@ function resetAll() {
 }
 
 // ============================================================
-// EXCEL EXPORT — نفس فورمات الجدول المعروض
+// EXCEL EXPORT
 // ============================================================
 function exportToExcel() {
     const headers = ["Agent Name", "Login ID", "State", "AUX Reason", "Direction", "Skill / Shift Details", "Time in State"];
@@ -264,7 +263,7 @@ function exportToExcel() {
 }
 
 // ============================================================
-// ADMIN — CRUD على شيت Structure (مرآة كاملة من الويب بيج للشيت)
+// ADMIN — CRUD على شيت Structure
 // ============================================================
 function openAdmin() {
     document.getElementById('adminModal').style.display = 'flex';
