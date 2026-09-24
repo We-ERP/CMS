@@ -138,7 +138,23 @@ function processAll() {
 
     const loggedInAgents = new Set();
 
-    // cms data
+    // -------- Pass 1: بناء خريطة Skill/Shift Details من عمود D في بيانات الـ Shift Schedule --------
+    const shiftDetailsMap = {};   // loginId -> نص عمود D (Skill / Shift Details)
+    const shiftStatusMap = {};    // loginId -> آخر عمود (نوع الإجازة/الحالة لتحديد Logged Off)
+
+    if (shiftRaw) {
+        shiftRaw.split('\n').forEach(line => {
+            const parts = line.split('\t');
+            if (parts.length >= 3) {
+                const loginId = parts[1]?.trim();
+                if (!loginId) return;
+                shiftDetailsMap[loginId] = (parts[3] || "-").trim();
+                shiftStatusMap[loginId] = (parts[parts.length - 1] || "").trim().toUpperCase();
+            }
+        });
+    }
+
+    // -------- Pass 2: بيانات الـ CMS (الموظفين الشغالين دلوقتي) --------
     if (cmsRaw) {
         const rows = cmsRaw.split('\n');
         rows.forEach(line => {
@@ -157,6 +173,7 @@ function processAll() {
                 else if (state === "AUX") countAux++;
 
                 if (activeFilters.includes(state)) {
+                    const skillShiftDetails = shiftDetailsMap[id] || "-";
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td style="font-weight:700; color:var(--text);">${agentStructure[id]}</td>
@@ -164,7 +181,7 @@ function processAll() {
                         <td><span class="badge st-${state}">${state}</span></td>
                         <td style="font-size:11px">${cols[6] || "-"}</td>
                         <td>${cols[8] || "-"}</td>
-                        <td style="font-size:11px; color:var(--text-dim)">${cols[cols.length-1] || "-"}</td>
+                        <td style="font-size:11px; color:var(--text-dim)">${skillShiftDetails}</td>
                         <td class="time-cell">${fixTime(cols[cols.length-2])}</td>
                     `;
                     tbody.appendChild(tr);
@@ -178,6 +195,7 @@ function processAll() {
     document.getElementById('kpi-acd').innerText = countAcd;
     document.getElementById('kpi-aux').innerText = countAux;
 
+    // -------- Pass 3: اللي عندهم شيفت ومش لاقيينهم في الـ CMS (Logged Off) --------
     if (shiftRaw) {
         const shiftRows = shiftRaw.split('\n');
         shiftRows.forEach(line => {
@@ -187,7 +205,7 @@ function processAll() {
 
                 if (!loginId || !agentStructure[loginId]) return;
 
-                const shiftStatus = parts[parts.length - 1]?.trim().toUpperCase();
+                const shiftStatus = shiftStatusMap[loginId] || "";
                 const offStates = ["DO", "UNPAID", "PLANNED SICK", "ANNUAL", "MATERNITY", " Sick Dayoff", "STUDY LEAVE", ""];
                 const hasShift = !offStates.includes(shiftStatus);
 
@@ -196,6 +214,7 @@ function processAll() {
 
                     if (activeFilters.includes("LOGGED OFF")) {
                         const name = agentStructure[loginId];
+                        const skillShiftDetails = shiftDetailsMap[loginId] || "-";
 
                         const tr = document.createElement('tr');
                         tr.className = "row-off";
@@ -205,7 +224,7 @@ function processAll() {
                             <td><span class="badge" style="background:var(--logoff); color:white;">LOGGED OFF</span></td>
                             <td style="font-size:11px; color:#dc2626; font-weight: bold;">Missing from CMS</td>
                             <td>-</td>
-                            <td style="font-size:11px; font-weight:bold; color:var(--text-dim)">Shift: ${parts[parts.length - 1]}</td>
+                            <td style="font-size:11px; font-weight:bold; color:var(--text-dim)">${skillShiftDetails}</td>
                             <td class="time-cell" style="color:var(--logoff)">-</td>
                         `;
                         tbody.appendChild(tr);
