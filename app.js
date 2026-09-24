@@ -1,14 +1,17 @@
 // ============================================================
-// CONFIG — Google Apps Script Web App URL
+// CONFIG — Google Apps Script Web App URL (نفس الرابط المستخدم في الشيت)
 // ============================================================
 const API_URL = "https://script.google.com/macros/s/AKfycbytna6gz9sE31tX_i00k1v9MAp9QyvKZwGYTao_r9B8qIVW1DcXUdyOl_Zb_kmcsFO2/exec";
 
+// agentStructure يتم تعبئته ديناميكيًا من شيت جوجل (عمود B = Login ID, عمود F = Group="OTC")
+// بدلاً من كونه ثابت داخل الكود
 let agentStructure = {};
-let currentUser = null; 
+let currentUser = null; // { username, fullName, role }
 let activeFilters = ["AVAIL", "ACD", "AUX", "RING", "LOGGED OFF"];
 
 // ============================================================
 // API HELPERS
+// (POST بدون Content-Type مخصص لتفادي مشاكل CORS Preflight مع Apps Script)
 // ============================================================
 async function apiGet(action) {
     const res = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`);
@@ -69,6 +72,7 @@ async function enterApp() {
     await fetchStructure();
 }
 
+// استعادة الجلسة لو الصفحة اتعمل لها Refresh
 window.addEventListener('DOMContentLoaded', async () => {
     const saved = sessionStorage.getItem('cms_otc_user');
     if (saved) {
@@ -78,36 +82,29 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ============================================================
-// STRUCTURE (Fetch & Store)
+// STRUCTURE (Sheet: column B = Login ID, column F = Group -> OTC only)
 // ============================================================
 async function fetchStructure() {
     try {
         const result = await apiGet('getStructure');
-        if (result.success && Array.isArray(result.data)) {
+        if (result.success) {
             agentStructure = {};
             result.data.forEach(row => {
-                const id = String(row.id || '').trim();
-                const name = String(row.name || '').trim();
-                const groupName = String(row.group || '').trim().toUpperCase();
-
-                if (id) {
-                    if (groupName.includes('OTC') || groupName === '' || !row.group) {
-                        agentStructure[id] = name;
-                    }
+                if (String(row.group).trim().toUpperCase() === 'OTC') {
+                    agentStructure[row.id] = row.name;
                 }
             });
-
-            console.log("Structure Loaded Successfully:", agentStructure);
-
-            if (document.getElementById('adminModal') && document.getElementById('adminModal').style.display !== 'none') {
-                renderAdminTable(result.data);
+            if (document.getElementById('adminModal').style.display !== 'none') {
+                renderAdminTable(result.data.filter(r => String(r.group).trim().toUpperCase() === 'OTC'));
             }
         }
     } catch (e) {
         console.error('Failed to load structure from Google Sheet', e);
     }
-}// ============================================================
-// ORIGINAL LOGIC WITH PARSING FIXES
+}
+
+// ============================================================
+// ORIGINAL LOGIC — UNCHANGED
 // ============================================================
 function fixTime(val) {
     if (!val || val.trim() === "") return "0:00:00";
@@ -141,52 +138,17 @@ function processAll() {
 
     const loggedInAgents = new Set();
 
-    // 1. معالجة CMS Raw Data
+    // cms data
     if (cmsRaw) {
-        const rawLines = cmsRaw.split('\n');
-        const cleanRows = [];
-        let tempBuffer = "";
+        const rows = cmsRaw.split('\n');
+        rows.forEach(line => {
+            const cols = line.split('\t');
+            if (cols.length >= 10 && !line.includes("Agent Name") && !line.includes("Login ID")) {
+                const id = cols[2]?.trim();
 
-        rawLines.forEach(line => {
-            if (!line.trim()) return;
-            if (line.includes('\t') || line.split(/\s+/).length > 3) {
-                if (tempBuffer) cleanRows.push(tempBuffer);
-                tempBuffer = line;
-            } else {
-                tempBuffer += " " + line.trim();
-            }
-        });
-        if (tempBuffer) cleanRows.push(tempBuffer);
+                if (!id || !agentStructure[id]) return;
 
-        cleanRows.forEach(line => {
-            let cols = line.split('\t');
-            if (cols.length < 5) {
-                cols = line.trim().split(/\s{2,}/);
-            }
-
-            if (cols.length >= 2 && !line.includes("Agent Name") && !line.includes("Login ID")) {
-                let id = "";
-                for (let i = 0; i < cols.length; i++) {
-                    const match = cols[i].trim().match(/\b\d{4,7}\b/);
-                    if (match) {
-                        id = match[0];
-                        break;
-                    }
-                }
-
-                if (!id) return;
-
-                const agentName = agentStructure[id] || `Unknown (${id})`;
-
-                let state = "OTHER";
-                for (let col of cols) {
-                    const uppercaseCol = col.trim().toUpperCase();
-                    if (["AVAIL", "ACD", "AUX", "RING", "LOGGED OFF"].includes(uppercaseCol)) {
-                        state = uppercaseCol;
-                        break;
-                    }
-                }
-
+                const state = cols[7]?.trim() || "OTHER";
                 loggedInAgents.add(id);
 
                 countStaffed++;
@@ -197,13 +159,13 @@ function processAll() {
                 if (activeFilters.includes(state)) {
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
-                        <td style="font-weight:700; color:var(--text);">${agentName}</td>
+                        <td style="font-weight:700; color:var(--text);">${agentStructure[id]}</td>
                         <td style="color:var(--text-dim); font-family: monospace; font-size:14px;">${id}</td>
                         <td><span class="badge st-${state}">${state}</span></td>
-                        <td style="font-size:11px">${cols[6] || cols[4] || "-"}</td>
-                        <td>${cols[8] || cols[5] || "-"}</td>
+                        <td style="font-size:11px">${cols[6] || "-"}</td>
+                        <td>${cols[8] || "-"}</td>
                         <td style="font-size:11px; color:var(--text-dim)">${cols[cols.length-1] || "-"}</td>
-                        <td class="time-cell">${fixTime(cols[cols.length-2] || "0")}</td>
+                        <td class="time-cell">${fixTime(cols[cols.length-2])}</td>
                     `;
                     tbody.appendChild(tr);
                 }
@@ -216,97 +178,29 @@ function processAll() {
     document.getElementById('kpi-acd').innerText = countAcd;
     document.getElementById('kpi-aux').innerText = countAux;
 
-    // 2. معالجة Shift Schedule لحساب الـ Logged Off
     if (shiftRaw) {
         const shiftRows = shiftRaw.split('\n');
         shiftRows.forEach(line => {
-            let parts = line.split('\t');
-            if (parts.length < 2) {
-                parts = line.trim().split(/\s{2,}/);
-            }
+            const parts = line.split('\t');
+            if (parts.length >= 3) {
+                const loginId = parts[1]?.trim();
 
-            if (parts.length >= 2) {
-                let loginId = "";
-                for (let part of parts) {
-                    const match = part.trim().match(/\b\d{4,7}\b/);
-                    if (match) {
-                        loginId = match[0];
-                        break;
-                    }
-                }
+                if (!loginId || !agentStructure[loginId]) return;
 
-                if (!loginId) return;
-
-                const agentName = agentStructure[loginId] || `Agent (${loginId})`;
-                const shiftStatus = parts[parts.length - 1]?.trim().toUpperCase() || "";
-                const offStates = ["DO", "UNPAID", "PLANNED SICK", "ANNUAL", "MATERNITY", "SICK DAYOFF", "STUDY LEAVE", ""];
+                const shiftStatus = parts[parts.length - 1]?.trim().toUpperCase();
+                const offStates = ["DO", "UNPAID", "PLANNED SICK", "ANNUAL", "MATERNITY", " Sick Dayoff", "STUDY LEAVE", ""];
                 const hasShift = !offStates.includes(shiftStatus);
 
                 if (hasShift && !loggedInAgents.has(loginId)) {
                     loggedOffCount++;
 
                     if (activeFilters.includes("LOGGED OFF")) {
+                        const name = agentStructure[loginId];
+
                         const tr = document.createElement('tr');
                         tr.className = "row-off";
                         tr.innerHTML = `
-                            <td style="font-weight:700; color:#dc2626;">${agentName}</td>
-                            <td style="color:var(--text-dim); font-family: monospace; font-size:14px;">${loginId}</td>
-                            <td><span class="badge" style="background:var(--logoff); color:white;">LOGGED OFF</span></td>
-                            <td style="font-size:11px; color:#dc2626; font-weight: bold;">Missing from CMS</td>
-                            <td>-</td>
-                            <td style="font-size:11px; font-weight:bold; color:var(--text-dim)">Shift: ${parts[parts.length - 1]}</td>
-                            <td class="time-cell" style="color:var(--logoff)">-</td>
-                        `;
-                        tbody.appendChild(tr);
-                    }
-                }
-            }
-        });
-    }
-
-    document.getElementById('kpi-loggedoff').innerText = loggedOffCount;
-}
-
-    document.getElementById('kpi-staffed').innerText = countStaffed;
-    document.getElementById('kpi-avail').innerText = countAvail;
-    document.getElementById('kpi-acd').innerText = countAcd;
-    document.getElementById('kpi-aux').innerText = countAux;
-
-    // 2. معالجة بيانات الـ Shift Schedule
-    if (shiftRaw) {
-        const shiftRows = shiftRaw.split('\n');
-        shiftRows.forEach(line => {
-            let parts = line.split('\t');
-            if (parts.length < 2) {
-                parts = line.trim().split(/\s{2,}/);
-            }
-
-            if (parts.length >= 2) {
-                // البحث عن Login ID داخل أجزاء السطر
-                let loginId = "";
-                for (let part of parts) {
-                    const match = part.trim().match(/\b\d{5,7}\b/);
-                    if (match) {
-                        loginId = match[0];
-                        break;
-                    }
-                }
-
-                if (!loginId) return;
-
-                const agentName = agentStructure[loginId] || `Agent (${loginId})`;
-                const shiftStatus = parts[parts.length - 1]?.trim().toUpperCase() || "";
-                const offStates = ["DO", "UNPAID", "PLANNED SICK", "ANNUAL", "MATERNITY", "SICK DAYOFF", "STUDY LEAVE", ""];
-                const hasShift = !offStates.includes(shiftStatus);
-
-                if (hasShift && !loggedInAgents.has(loginId)) {
-                    loggedOffCount++;
-
-                    if (activeFilters.includes("LOGGED OFF")) {
-                        const tr = document.createElement('tr');
-                        tr.className = "row-off";
-                        tr.innerHTML = `
-                            <td style="font-weight:700; color:#dc2626;">${agentName}</td>
+                            <td style="font-weight:700; color:#dc2626;">${name}</td>
                             <td style="color:var(--text-dim); font-family: monospace; font-size:14px;">${loginId}</td>
                             <td><span class="badge" style="background:var(--logoff); color:white;">LOGGED OFF</span></td>
                             <td style="font-size:11px; color:#dc2626; font-weight: bold;">Missing from CMS</td>
@@ -344,7 +238,7 @@ function resetAll() {
 }
 
 // ============================================================
-// EXCEL EXPORT
+// EXCEL EXPORT — نفس فورمات الجدول المعروض
 // ============================================================
 function exportToExcel() {
     const headers = ["Agent Name", "Login ID", "State", "AUX Reason", "Direction", "Skill / Shift Details", "Time in State"];
@@ -370,7 +264,7 @@ function exportToExcel() {
 }
 
 // ============================================================
-// ADMIN CRUD
+// ADMIN — CRUD على شيت Structure (مرآة كاملة من الويب بيج للشيت)
 // ============================================================
 function openAdmin() {
     document.getElementById('adminModal').style.display = 'flex';
@@ -385,7 +279,7 @@ function closeAdmin() {
 async function refreshAdminList() {
     const result = await apiGet('getStructure');
     if (result.success) {
-        renderAdminTable(result.data);
+        renderAdminTable(result.data.filter(r => String(r.group).trim().toUpperCase() === 'OTC'));
     }
 }
 
